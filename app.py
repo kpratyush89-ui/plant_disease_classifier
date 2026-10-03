@@ -15,20 +15,23 @@ st.set_page_config(
 st.title("🥭 Mango Leaf Disease Diagnostic System")
 st.write("Upload a clear photograph of a mango leaf to detect potential diseases using deep learning.")
 
-# Model Loader with Cache
+# TFLite Model Loader with Cache
 @st.cache_resource
-def load_mango_model():
-    # Prefers the lightweight deployment model if available
-    if os.path.exists("mango_disease_model_light.keras"):
-        return tf.keras.models.load_model("mango_disease_model_light.keras")
-    elif os.path.exists("mango_disease_model.keras"):
-        return tf.keras.models.load_model("mango_disease_model.keras")
-    else:
-        st.error("Model file missing! Place 'mango_disease_model_light.keras' or 'mango_disease_model.keras' in this directory.")
+def load_tflite_model():
+    model_path = "mango_disease_model.tflite"
+    if not os.path.exists(model_path):
+        st.error(f"Model file missing! Please upload '{model_path}' to your project directory.")
         st.stop()
+    
+    interpreter = tf.lite.Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
+    return interpreter
 
-with st.spinner("Loading AI Model..."):
-    model = load_mango_model()
+with st.spinner("Loading TFLite AI Model..."):
+    interpreter = load_tflite_model()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 # Class Labels
 CLASS_NAMES = [
@@ -57,9 +60,17 @@ if uploaded_file is not None:
 
     # Inference Button
     if st.button("🔍 Diagnose Leaf Health"):
-        with st.spinner("Analyzing leaf features..."):
-            predictions = model.predict(img_batch)
-            score = tf.nn.softmax(predictions[0]).numpy() if predictions[0].max() > 1.0 else predictions[0]
+        with st.spinner("Analyzing leaf features with TFLite..."):
+            # Set tensor and invoke interpreter
+            interpreter.set_tensor(input_details[0]['index'], img_batch)
+            interpreter.invoke()
+            raw_output = interpreter.get_tensor(output_details[0]['index'])[0]
+
+            # Apply Softmax normalization if output is raw logits
+            if raw_output.max() > 1.0 or raw_output.min() < 0.0:
+                score = tf.nn.softmax(raw_output).numpy()
+            else:
+                score = raw_output
 
             # Top 2 Predictions Extraction
             top2_indices = np.argsort(score)[-2:][::-1]
@@ -90,3 +101,5 @@ if uploaded_file is not None:
             prob = float(score[idx] * 100)
             st.write(f"**{name}**: {prob:.2f}%")
             st.progress(int(prob))
+    
+    
